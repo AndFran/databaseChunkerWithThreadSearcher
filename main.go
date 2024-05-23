@@ -3,7 +3,9 @@ package main
 import (
 	"flag"
 	"fmt"
+	"strings"
 	"sync"
+	"time"
 )
 
 type User struct {
@@ -34,19 +36,19 @@ var DataBase = []User{
 
 type Worker struct {
 	users []User
+	ch    chan *User
 }
 
-func NewWorker(users []User) *Worker {
-	return &Worker{users: users}
+func NewWorker(users []User, ch chan *User) *Worker {
+	return &Worker{users: users, ch: ch}
 }
 
-func (w *Worker) find(email string) *User {
+func (w *Worker) find(email string) {
 	for _, u := range w.users {
-		if u.Email == email {
-			return &u
+		if strings.Contains(u.Email, email) {
+			w.ch <- &u
 		}
 	}
-	return nil
 }
 
 func splitDb(numPerGroup int, db []User) [][]User {
@@ -99,11 +101,7 @@ func main() {
 
 		go func(i int) {
 			defer wg.Done()
-			w := NewWorker(chunks[i])
-			r := w.find(*email)
-			if r != nil {
-				result <- r
-			}
+			NewWorker(chunks[i], result).find(*email) // result on channel
 		}(i)
 	}
 
@@ -112,11 +110,17 @@ func main() {
 		done <- true
 	}()
 
-	select {
-	case <-done:
-		fmt.Println("Nothing found")
-		break
-	case found := <-result:
-		fmt.Println("Found:", found)
+loop:
+	for {
+		select {
+		case <-done:
+			fmt.Println("Finished")
+			break loop
+		case found := <-result:
+			fmt.Println("Found:", found)
+		case <-time.After(5 * time.Second):
+			fmt.Println("Timed out")
+			break loop
+		}
 	}
 }
